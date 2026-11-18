@@ -1,0 +1,537 @@
+
+R version 4.5.3 (2026-03-11 ucrt) -- "Reassured Reassurer"
+Copyright (C) 2026 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> # -----------------------------
+> # 1. Install and load packages
+> # -----------------------------
+> 
+> required_packages <- c("ggplot2", "gifski")
+> 
+> for (pkg in required_packages) {
++   if (!requireNamespace(pkg, quietly = TRUE)) {
++     message("Installing package: ", pkg)
++ 
++     install.packages(
++       pkg,
++       repos = "https://cloud.r-project.org"
++     )
++   }
++ 
++   if (!requireNamespace(pkg, quietly = TRUE)) {
++     stop(
++       "Package '", pkg, "' is unavailable. ",
++       "Install it manually with install.packages('", pkg, "')."
++     )
++   }
++ }
+> 
+> library(ggplot2)
+> 
+> 
+> # -----------------------------
+> # 2. Define model parameters
+> # -----------------------------
+> 
+> # Boundary separation:
+> # Evidence stops when it reaches either boundary.
+> a <- 1.00
+> 
+> # Relative starting point:
+> # z = 0.5 means evidence begins halfway between the boundaries.
+> z <- 0.50
+> 
+> # Non-decision time, in seconds.
+> # This is illustrative and is not directly added to the
+> # simulated evidence trajectories in this visualization.
+> t0 <- 0.30
+> 
+> # Simulation settings
+> n_paths <- 15
+> n_steps <- 100
+> dt <- 0.02
+> noise_sd <- 1.00
+> 
+> # Reproducibility: produces the same random trajectories
+> # each time the script is run.
+> set.seed(123)
+> 
+> 
+> # -----------------------------
+> # 3. Define drift rates
+> # -----------------------------
+> 
+> # Illustrative baseline drift rate for the no-mask condition.
+> v_none <- 1.50
+> 
+> # Study 1 reported lower-mask drift effect: b = -0.38
+> v_lower_s1 <- v_none - 0.38
+> 
+> # Study 2 reported lower-mask drift effect: b = -0.65
+> v_lower_s2 <- v_none - 0.65
+> 
+> 
+> # -----------------------------
+> # 4. Store reported study values
+> # -----------------------------
+> 
+> study_values <- data.frame(
++   Study = c("Study 1", "Study 2"),
++   Sample_size = c(228, 264),
++   Drift_effect = c(-0.38, -0.65),
++   CI_lower = c(-0.41, -0.71),
++   CI_upper = c(-0.34, -0.59)
++ )
+> 
+> cat("\nReported study results:\n")
+
+Reported study results:
+> print(study_values)
+    Study Sample_size Drift_effect CI_lower CI_upper
+1 Study 1         228        -0.38    -0.41    -0.34
+2 Study 2         264        -0.65    -0.71    -0.59
+> 
+> cat("\nIllustrative simulation parameters:\n")
+
+Illustrative simulation parameters:
+> print(
++   data.frame(
++     Parameter = c(
++       "Boundary separation (a)",
++       "Starting point (z)",
++       "Non-decision time (t0)",
++       "Noise SD",
++       "No-mask drift",
++       "Lower-mask drift, Study 1",
++       "Lower-mask drift, Study 2"
++     ),
++     Value = c(
++       a, z, t0, noise_sd,
++       v_none, v_lower_s1, v_lower_s2
++     )
++   )
++ )
+                  Parameter Value
+1   Boundary separation (a)  1.00
+2        Starting point (z)  0.50
+3    Non-decision time (t0)  0.30
+4                  Noise SD  1.00
+5             No-mask drift  1.50
+6 Lower-mask drift, Study 1  1.12
+7 Lower-mask drift, Study 2  0.85
+> 
+> 
+> # -----------------------------
+> # 5. Calculate starting evidence
+> # -----------------------------
+> 
+> # Convert relative starting point z to evidence scale [-a, a].
+> start_point <- -a + 2 * a * z
+> 
+> 
+> # -----------------------------
+> # 6. Simulate evidence paths
+> # -----------------------------
+> 
+> simulate_paths <- function(
++     v,
++     n_paths,
++     n_steps,
++     dt,
++     noise_sd,
++     start,
++     boundary
++ ) {
++ 
++   out <- vector("list", n_paths)
++ 
++   for (i in seq_len(n_paths)) {
++ 
++     # Evidence increments:
++     # drift component + random noise.
++     increments <- (
++       v * dt +
++         rnorm(
++           n_steps,
++           mean = 0,
++           sd = noise_sd * sqrt(dt)
++         )
++     )
++ 
++     # Accumulated evidence over time.
++     evidence <- start + cumsum(increments)
++ 
++     # Identify the first boundary crossing.
++     hit <- which(
++       evidence >= boundary |
++         evidence <= -boundary
++     )
++ 
++     # Stop accumulating evidence after a boundary is reached.
++     if (length(hit) > 0) {
++ 
++       first_hit <- hit[1]
++ 
++       # Clip the crossing value to the boundary.
++       evidence[first_hit] <- max(
++         min(evidence[first_hit], boundary),
++         -boundary
++       )
++ 
++       # Set subsequent evidence values to NA so the path ends.
++       if (first_hit < n_steps) {
++         evidence[(first_hit + 1):n_steps] <- NA_real_
++       }
++     }
++ 
++     out[[i]] <- data.frame(
++       path = i,
++       step = seq_len(n_steps),
++       time = seq_len(n_steps) * dt,
++       evidence = evidence
++     )
++   }
++ 
++   do.call(rbind, out)
++ }
+> 
+> 
+> # -----------------------------
+> # 7. Generate paths for conditions
+> # -----------------------------
+> 
+> paths_none <- simulate_paths(
++   v = v_none,
++   n_paths = n_paths,
++   n_steps = n_steps,
++   dt = dt,
++   noise_sd = noise_sd,
++   start = start_point,
++   boundary = a
++ )
+> 
+> paths_s1 <- simulate_paths(
++   v = v_lower_s1,
++   n_paths = n_paths,
++   n_steps = n_steps,
++   dt = dt,
++   noise_sd = noise_sd,
++   start = start_point,
++   boundary = a
++ )
+> 
+> paths_s2 <- simulate_paths(
++   v = v_lower_s2,
++   n_paths = n_paths,
++   n_steps = n_steps,
++   dt = dt,
++   noise_sd = noise_sd,
++   start = start_point,
++   boundary = a
++ )
+> 
+> 
+> # Label each condition.
+> paths_none$condition <- "No mask (illustrative baseline)"
+> paths_s1$condition <- "Lower mask - Study 1 effect"
+> paths_s2$condition <- "Lower mask - Study 2 effect"
+> 
+> # Combine all trajectories.
+> all_paths <- rbind(
++   paths_none,
++   paths_s1,
++   paths_s2
++ )
+> 
+> # Ensure condition order is consistent in the legend.
+> all_paths$condition <- factor(
++   all_paths$condition,
++   levels = c(
++     "No mask (illustrative baseline)",
++     "Lower mask - Study 1 effect",
++     "Lower mask - Study 2 effect"
++   )
++ )
+> 
+> 
+> # -----------------------------
+> # 8. Set up animation output
+> # -----------------------------
+> 
+> out_dir <- file.path(
++   getwd(),
++   "ddm_frames"
++ )
+> 
+> dir.create(
++   out_dir,
++   showWarnings = FALSE,
++   recursive = TRUE
++ )
+> 
+> n_frames <- 60
+> 
+> frame_files <- character(n_frames)
+> 
+> total_time <- n_steps * dt
+> 
+> 
+> # -----------------------------
+> # 9. Create animation frames
+> # -----------------------------
+> 
+> for (f in seq_len(n_frames)) {
++ 
++   # Reveal more of each trajectory with every frame.
++   current_step <- max(
++     2,
++     round(n_steps * f / n_frames)
++   )
++ 
++   visible <- all_paths[
++     all_paths$step <= current_step,
++   ]
++ 
++   current_time <- current_step * dt
++ 
++   p <- ggplot(
++     visible,
++     aes(
++       x = time,
++       y = evidence,
++       group = interaction(condition, path),
++       color = condition
++     )
++   ) +
++ 
++     # Decision boundaries
++     geom_hline(
++       yintercept = c(-a, a),
++       linetype = "dashed",
++       linewidth = 0.7,
++       color = "grey35"
++     ) +
++ 
++     # Starting evidence reference line
++     geom_hline(
++       yintercept = 0,
++       linewidth = 0.35,
++       color = "grey75"
++     ) +
++ 
++     # Evidence accumulation paths
++     geom_line(
++       linewidth = 0.65,
++       na.rm = TRUE,
++       alpha = 0.8
++     ) +
++ 
++     # Condition colors
++     scale_color_manual(
++       values = c(
++         "No mask (illustrative baseline)" = "#2878B5",
++         "Lower mask - Study 1 effect" = "#E07A24",
++         "Lower mask - Study 2 effect" = "#B33C3C"
++       )
++     ) +
++ 
++     # Keep the plot axes fixed across frames.
++     coord_cartesian(
++       xlim = c(0, total_time),
++       ylim = c(-1.15, 1.15)
++     ) +
++ 
++     labs(
++       title = "Drift-Diffusion Model: Evidence Accumulation",
++ 
++       subtitle = sprintf(
++         "Simulation time: %.2f s | Frame %d/%d",
++         current_time,
++         f,
++         n_frames
++       ),
++ 
++       x = "Decision time (seconds; illustrative)",
++       y = "Accumulated evidence",
++       color = "Condition",
++ 
++       caption = paste0(
++         "Reported lower-mask effects: ",
++         "Study 1 b = -0.38, 95% CI [-0.41, -0.34]; ",
++         "Study 2 b = -0.65, 95% CI [-0.71, -0.59].\n",
++         "Absolute drift rates and DDM parameters are illustrative, ",
++         "not the paper's fitted estimates."
++       )
++     ) +
++ 
++     theme_minimal(base_size = 12) +
++ 
++     theme(
++       legend.position = "bottom",
++       plot.title = element_text(face = "bold"),
++       plot.caption = element_text(
++         size = 8,
++         hjust = 0
++       )
++     ) +
++ 
++     annotate(
++       "label",
++       x = 0.02,
++       y = 1.10,
++       hjust = 0,
++       vjust = 1,
++ 
++       label = sprintf(
++         paste0(
++           "Illustrative drift rates: no mask = %.2f; ",
++           "lower mask S1 = %.2f; S2 = %.2f\n",
++           "a = %.2f | z = %.2f | t0 = %.2f s"
++         ),
++         v_none,
++         v_lower_s1,
++         v_lower_s2,
++         a,
++         z,
++         t0
++       ),
++ 
++       size = 3.2,
++       label.size = 0.2,
++       alpha = 0.9
++     )
++ 
++   # Save this frame as a PNG.
++   frame_files[f] <- file.path(
++     out_dir,
++     sprintf("frame_%03d.png", f)
++   )
++ 
++   ggsave(
++     filename = frame_files[f],
++     plot = p,
++     width = 10,
++     height = 6,
++     dpi = 110
++   )
++ }
+There were 50 or more warnings (use warnings() to see the first 50)
+> 
+> 
+> # -----------------------------
+> # 10. Verify animation frames
+> # -----------------------------
+> 
+> if (
++   length(frame_files) != n_frames ||
++     any(!file.exists(frame_files))
++ ) {
++   stop(
++     "Some animation frames are missing. ",
++     "Check the error messages above and rerun the entire script."
++   )
++ }
+> 
+> message(
++   "Successfully created ",
++   n_frames,
++   " animation frames."
++ )
+Successfully created 60 animation frames.
+> 
+> 
+> # -----------------------------
+> # 11. Export animated GIF
+> # -----------------------------
+> 
+> gif_file <- file.path(
++   getwd(),
++   "face_masks_ddm_animation.gif"
++ )
+> 
+> if (!requireNamespace("gifski", quietly = TRUE)) {
++   stop(
++     "Package 'gifski' is not available. ",
++     "Run install.packages('gifski') and rerun the script."
++   )
++ }
+> 
+> gifski::gifski(
++   png_files = frame_files,
++   gif_file = gif_file,
++   width = 1100,
++   height = 660,
++   delay = 0.08,
++   loop = TRUE
++ )
+Inserting image 1 at 0.00s (1%)...Inserting image 2 at 0.08s (3%)...Inserting image 3 at 0.16s (5%)...Inserting image 4 at 0.24s (6%)...Inserting image 5 at 0.32s (8%)...Inserting image 6 at 0.40s (10%)...Inserting image 7 at 0.48s (11%)...Inserting image 8 at 0.56s (13%)...Inserting image 9 at 0.64s (15%)...Inserting image 10 at 0.72s (16%)...Inserting image 11 at 0.80s (18%)...Inserting image 12 at 0.88s (20%)...Inserting image 13 at 0.96s (21%)...Inserting image 14 at 1.04s (23%)...Inserting image 15 at 1.12s (25%)...Inserting image 16 at 1.20s (26%)...Inserting image 17 at 1.28s (28%)...Inserting image 18 at 1.36s (30%)...Inserting image 19 at 1.44s (31%)...Inserting image 20 at 1.52s (33%)...Inserting image 21 at 1.60s (35%)...Inserting image 22 at 1.68s (36%)...Inserting image 23 at 1.76s (38%)...Inserting image 24 at 1.84s (40%)...Inserting image 25 at 1.92s (41%)...Inserting image 26 at 2.00s (43%)...Inserting image 27 at 2.08s (45%)...Inserting image 28 at 2.16s (46%)...Inserting image 29 at 2.24s (48%)...Inserting image 30 at 2.32s (50%)...Inserting image 31 at 2.40s (51%)...Inserting image 32 at 2.48s (53%)...Inserting image 33 at 2.56s (55%)...Inserting image 34 at 2.64s (56%)...Inserting image 35 at 2.72s (58%)...Inserting image 36 at 2.80s (60%)...Inserting image 37 at 2.88s (61%)...Inserting image 38 at 2.96s (63%)...Inserting image 39 at 3.04s (65%)...Inserting image 40 at 3.12s (66%)...Inserting image 41 at 3.20s (68%)...Inserting image 42 at 3.28s (70%)...Inserting image 43 at 3.36s (71%)...Inserting image 44 at 3.44s (73%)...Inserting image 45 at 3.52s (75%)...Inserting image 46 at 3.60s (76%)...Inserting image 47 at 3.68s (78%)...Inserting image 48 at 3.76s (80%)...Inserting image 49 at 3.84s (81%)...Inserting image 50 at 3.92s (83%)...Inserting image 51 at 4.00s (85%)...Inserting image 52 at 4.08s (86%)...Inserting image 53 at 4.16s (88%)...Inserting image 54 at 4.24s (90%)...Inserting image 55 at 4.32s (91%)...Inserting image 56 at 4.40s (93%)...Inserting image 57 at 4.48s (95%)...Inserting image 58 at 4.56s (96%)...Inserting image 59 at 4.64s (98%)...Inserting image 60 at 4.72s (100%)...
+Encoding to gif... done!
+[1] "C:\\Users\\gurug\\OneDrive\\Documents\\face_masks_ddm_animation.gif"
+> 
+> 
+> # -----------------------------
+> # 12. Confirm output files
+> # -----------------------------
+> 
+> if (!file.exists(gif_file)) {
++   stop(
++     "GIF export failed: the output file was not created."
++   )
++ }
+> 
+> cat("\n----------------------------------------\n")
+
+----------------------------------------
+> cat("SUCCESS: The animation GIF was created.\n")
+SUCCESS: The animation GIF was created.
+> cat("----------------------------------------\n")
+----------------------------------------
+> 
+> cat("\nGIF location:\n")
+
+GIF location:
+> cat(normalizePath(gif_file), "\n")
+C:\Users\gurug\OneDrive\Documents\face_masks_ddm_animation.gif 
+> 
+> cat("\nAnimation frames folder:\n")
+
+Animation frames folder:
+> cat(normalizePath(out_dir), "\n")
+C:\Users\gurug\OneDrive\Documents\ddm_frames 
+> 
+> cat("\nReported study values:\n")
+
+Reported study values:
+> print(study_values)
+    Study Sample_size Drift_effect CI_lower CI_upper
+1 Study 1         228        -0.38    -0.41    -0.34
+2 Study 2         264        -0.65    -0.71    -0.59
+> 
+> gif_file <- file.path(
++   getwd(),
++   "face_masks_ddm_animation.gif"
++ )
+> 
+> if (file.exists(gif_file)) {
++   browseURL(normalizePath(gif_file))
++ } else {
++   message("GIF not found. Check your working directory with getwd().")
++ }
+> 
